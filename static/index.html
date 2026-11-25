@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IH063 Criptografía - Scramble Mini-Blockchain</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <style>
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-8px); }
+            75% { transform: translateX(8px); }
+        }
+        .shake { animation: shake 0.3s ease-in-out; }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-4 md:p-6 font-sans">
+
+    <!-- Encabezado Académico -->
+    <header class="max-w-6xl mx-auto mb-6 flex flex-col md:flex-row justify-between items-center gap-4 border-b border-slate-800 pb-4">
+        <div>
+            <span class="text-xs font-mono uppercase tracking-wider text-emerald-400">Proyecto Final IH063 – Criptografía (EC2 + DynamoDB)</span>
+            <h1 class="text-2xl md:text-3xl font-extrabold text-white">Scramble Animal: Base de Datos Encadenada (SHA-256)</h1>
+        </div>
+        <div id="db-status-badge" class="px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+            Verificando DynamoDB...
+        </div>
+    </header>
+
+    <!-- Banner de Mantenimiento cuando la BD se pausa desde el script AWS -->
+    <div id="db-paused-banner" class="hidden max-w-6xl mx-auto mb-6 bg-amber-500/15 border border-amber-500/40 text-amber-200 px-4 py-3 rounded-2xl text-sm">
+        <strong>Base de datos en pausa:</strong> El administrador AWS activó el modo mantenimiento. Puedes consultar la cadena existente, pero no se pueden minar nuevos bloques ni simular ataques hasta reanudarla.
+    </div>
+
+    <main class="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- COLUMNA IZQUIERDA: JUEGO E IDENTIFICACIÓN (7 cols) -->
+        <section class="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl">
+
+            <!-- PASO 1: PANTALLA DE IDENTIFICACIÓN -->
+            <div id="screen-login" class="py-6">
+                <h2 class="text-xl font-bold text-emerald-300 mb-2">1. Identificación del Jugador</h2>
+                <p class="text-sm text-slate-400 mb-6">
+                    Ingresa tu nombre para iniciar el reto de <strong>3 minutos</strong>. Si ya tienes registros previos, el nuevo intento se encadenará criptográficamente a tu historial en DynamoDB.
+                </p>
+
+                <div class="flex gap-2 mb-4">
+                    <input id="input-player" type="text" placeholder="Ej. CARLOS_PEREZ" 
+                        class="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-white uppercase focus:outline-none focus:border-emerald-400">
+                    <button onclick="consultarJugador()" class="bg-slate-800 hover:bg-slate-700 px-4 py-3 rounded-xl text-sm font-semibold transition cursor-pointer">
+                        Buscar Historial
+                    </button>
+                </div>
+
+                <!-- Tarjeta de historial previo del jugador -->
+                <div id="player-history-card" class="hidden bg-slate-950 border border-slate-800 rounded-2xl p-4 mb-6">
+                    <div class="flex justify-between items-center mb-3">
+                        <span class="text-xs uppercase font-bold text-emerald-400" id="hist-status">Jugador Nuevo</span>
+                        <span class="text-xs text-slate-400" id="hist-attempts">Intentos previos: 0</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3 mb-3">
+                        <div class="bg-slate-900 p-3 rounded-xl border border-slate-800">
+                            <span class="block text-xs text-slate-400">Puntuación Más Alta</span>
+                            <span id="hist-max" class="text-xl font-extrabold text-amber-400">0 pts</span>
+                        </div>
+                        <div class="bg-slate-900 p-3 rounded-xl border border-slate-800">
+                            <span class="block text-xs text-slate-400">Último Intento</span>
+                            <span id="hist-last" class="text-xl font-extrabold text-sky-400">-</span>
+                        </div>
+                    </div>
+                    <div id="hist-hash-box" class="hidden text-[11px] font-mono text-slate-400 bg-slate-900 p-2 rounded-lg break-all">
+                        Último Hash SHA-256: <span id="hist-last-hash" class="text-emerald-300"></span>
+                    </div>
+                </div>
+
+                <button onclick="iniciarPartida()" class="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold py-3.5 rounded-xl text-lg transition cursor-pointer">
+                    Iniciar Reto de 3 Minutos
+                </button>
+            </div>
+
+            <!-- PASO 2: TABLERO DE JUEGO -->
+            <div id="screen-game" class="hidden">
+                <div class="flex flex-wrap justify-between items-center gap-3 bg-slate-950 p-4 rounded-2xl border border-slate-800 mb-6">
+                    <div>
+                        <span class="block text-xs text-slate-400">Jugador Activo</span>
+                        <span id="active-player-label" class="font-bold text-emerald-300"></span>
+                    </div>
+                    <div class="text-center">
+                        <span class="block text-xs text-slate-400">Tiempo Restante</span>
+                        <span id="timer-display" class="text-2xl font-mono font-extrabold text-amber-400">03:00</span>
+                    </div>
+                    <div class="flex gap-3 text-center">
+                        <div>
+                            <span class="block text-xs text-slate-400">Puntos</span>
+                            <span id="score" class="text-xl font-bold text-white">0</span>
+                        </div>
+                        <div>
+                            <span class="block text-xs text-slate-400">Animales</span>
+                            <span id="solved" class="text-xl font-bold text-emerald-400">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex justify-between items-center mb-3">
+                    <span id="difficulty-badge" class="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300">Cargando...</span>
+                    <button onclick="toggleHint()" class="text-xs text-amber-300 hover:underline cursor-pointer">Mostrar/Ocultar Pista</button>
+                </div>
+                <p id="hint-text" class="hidden bg-amber-500/10 border border-amber-500/30 text-amber-200 text-sm p-3 rounded-xl mb-5 text-center italic"></p>
+
+                <div id="answer-slots" class="flex flex-wrap justify-center gap-2 min-h-[56px] mb-5"></div>
+                <div id="letter-pool" class="flex flex-wrap justify-center gap-2 min-h-[56px] mb-6"></div>
+
+                <div class="grid grid-cols-3 gap-3 mb-4">
+                    <button onclick="clearAnswer()" class="bg-slate-800 hover:bg-slate-700 py-3 rounded-xl font-semibold transition cursor-pointer">Borrar</button>
+                    <button onclick="loadNextAnimal()" class="bg-amber-600 hover:bg-amber-500 py-3 rounded-xl font-semibold transition cursor-pointer">Saltar</button>
+                    <button onclick="checkAnswer()" class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3 rounded-xl transition cursor-pointer">Comprobar</button>
+                </div>
+
+                <div class="flex justify-between items-center pt-3 border-t border-slate-800">
+                    <p id="status-msg" class="text-xs text-emerald-300"></p>
+                    <button onclick="finalizarPartidaManual()" class="text-xs text-rose-400 hover:underline cursor-pointer">
+                        Terminar y Minar Bloque Ahora
+                    </button>
+                </div>
+            </div>
+
+            <!-- PASO 3: RESUMEN AL FINALIZAR -->
+            <div id="screen-summary" class="hidden text-center py-6">
+                <h2 class="text-2xl font-extrabold text-amber-400 mb-2">¡Partida Finalizada!</h2>
+                <p class="text-sm text-slate-300 mb-4">Tu intento ha sido encadenado en DynamoDB con SHA-256.</p>
+                
+                <div class="bg-slate-950 border border-slate-800 rounded-2xl p-4 text-left font-mono text-xs space-y-2 mb-6">
+                    <div><span class="text-slate-400">Bloque ID:</span> <span id="sum-id" class="text-white font-bold"></span></div>
+                    <div><span class="text-slate-400">Jugador:</span> <span id="sum-player" class="text-emerald-300"></span> (Intento #<span id="sum-attempt"></span>)</div>
+                    <div><span class="text-slate-400">Resultado:</span> <span id="sum-score" class="text-amber-300 font-bold"></span></div>
+                    <div class="break-all"><span class="text-slate-400">Prev Hash:</span> <span id="sum-prev" class="text-slate-400"></span></div>
+                    <div class="break-all"><span class="text-slate-400">Hash Actual:</span> <span id="sum-hash" class="text-emerald-400"></span></div>
+                </div>
+
+                <button onclick="volverAlInicio()" class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-6 py-3 rounded-xl transition cursor-pointer">
+                    Nuevo Intento / Cambiar Jugador
+                </button>
+            </div>
+        </section>
+
+        <!-- COLUMNA DERECHA: EXPLORADOR MINI-BLOCKCHAIN Y AUDITORÍA (5 cols) -->
+        <section class="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl flex flex-col">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-bold text-white">Cadena de Bloques (DynamoDB)</h2>
+                <button onclick="cargarCadena()" class="bg-sky-600 hover:bg-sky-500 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer">
+                    Verificar Integridad
+                </button>
+            </div>
+
+            <div id="audit-banner" class="p-3 rounded-xl text-xs mb-4 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300">
+                Cadena verificada correctamente. Todos los hashes coinciden.
+            </div>
+
+            <div id="blocks-container" class="space-y-3 max-h-[340px] overflow-y-auto pr-1 mb-5 flex-1"></div>
+
+            <!-- Simulador de Ataque -->
+            <div class="bg-rose-950/30 border border-rose-500/30 rounded-2xl p-4">
+                <h3 class="text-xs font-bold uppercase text-rose-400 mb-2">Simulador de Alteración (Prueba de Ataque)</h3>
+                <p class="text-[11px] text-slate-400 mb-3">Modifica la puntuación de un bloque pasado directamente en DynamoDB sin recalcular hashes para romper la cadena:</p>
+                <div class="flex gap-2">
+                    <input id="attack-id" type="number" min="1" placeholder="ID Bloque" class="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white">
+                    <input id="attack-score" type="number" placeholder="Nuevos Pts" class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white">
+                    <button onclick="ejecutarAtaque()" class="bg-rose-600 hover:bg-rose-500 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer">
+                        Alterar
+                    </button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        let currentPlayer = "";
+        let currentAnimal = null;
+        let poolLetters = [];
+        let answerLetters = [];
+        let score = 0;
+        let solved = 0;
+        let timeLeft = 180;
+        let timerInterval = null;
+
+        async function verificarEstadoBD() {
+            try {
+                const res = await fetch('/api/estado-bd');
+                const data = await res.json();
+                const badge = document.getElementById('db-status-badge');
+                const banner = document.getElementById('db-paused-banner');
+                if (data.pausada) {
+                    badge.textContent = `DynamoDB Pausada (${data.table_name})`;
+                    badge.className = "px-3 py-1.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40";
+                    banner.classList.remove('hidden');
+                } else {
+                    badge.textContent = `DynamoDB Conectada (${data.table_name})`;
+                    badge.className = "px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30";
+                    banner.classList.add('hidden');
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function consultarJugador() {
+            const nameInput = document.getElementById('input-player').value.trim();
+            if (!nameInput) return;
+
+            const res = await fetch(`/api/jugador/${encodeURIComponent(nameInput)}`);
+            const data = await res.json();
+
+            const card = document.getElementById('player-history-card');
+            card.classList.remove('hidden');
+
+            if (data.existe) {
+                document.getElementById('hist-status').textContent = `Jugador Registrado: ${data.jugador}`;
+                document.getElementById('hist-attempts').textContent = `Intentos previos: ${data.intentos}`;
+                document.getElementById('hist-max').textContent = `${data.max_puntuacion} pts`;
+                document.getElementById('hist-last').textContent = `${data.ultimo_intento.puntuacion} pts (Intento #${data.ultimo_intento.intento_num})`;
+                document.getElementById('hist-hash-box').classList.remove('hidden');
+                document.getElementById('hist-last-hash').textContent = data.ultimo_intento.hash;
+            } else {
+                document.getElementById('hist-status').textContent = `Nuevo Jugador: ${data.jugador}`;
+                document.getElementById('hist-attempts').textContent = `Intentos previos: 0`;
+                document.getElementById('hist-max').textContent = `0 pts`;
+                document.getElementById('hist-last').textContent = `Sin intentos`;
+                document.getElementById('hist-hash-box').classList.add('hidden');
+            }
+        }
+
+        async function iniciarPartida() {
+            const nameInput = document.getElementById('input-player').value.trim().toUpperCase();
+            if (!nameInput) {
+                alert("Por favor ingresa tu nombre identificador antes de comenzar.");
+                return;
+            }
+
+            const bdRes = await fetch('/api/estado-bd');
+            const bdData = await bdRes.json();
+            if (bdData.pausada) {
+                alert("La base de datos está PAUSADA desde AWS. Reanúdala antes de iniciar una partida.");
+                return;
+            }
+
+            const checkRes = await fetch(`/api/jugador/${encodeURIComponent(nameInput)}`);
+            const checkData = await checkRes.json();
+            if (checkData.existe && !checkData.integra) {
+                alert("Esta cadena fue alterada y no se puede volver a usar.");
+                return;
+            }
+
+            currentPlayer = nameInput;
+            score = 0;
+            solved = 0;
+            timeLeft = 180;
+
+            document.getElementById('score').textContent = '0';
+            document.getElementById('solved').textContent = '0';
+            document.getElementById('active-player-label').textContent = currentPlayer;
+
+            document.getElementById('screen-login').classList.add('hidden');
+            document.getElementById('screen-summary').classList.add('hidden');
+            document.getElementById('screen-game').classList.remove('hidden');
+
+            actualizarRelojVisual();
+            clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                actualizarRelojVisual();
+                if (timeLeft <= 0) {
+                    clearInterval(timerInterval);
+                    finalizarYMinarBloque();
+                }
+            }, 1000);
+
+            await loadNextAnimal();
+        }
+
+        function actualizarRelojVisual() {
+            const mins = String(Math.floor(timeLeft / 60)).padStart(2, '0');
+            const secs = String(timeLeft % 60).padStart(2, '0');
+            const el = document.getElementById('timer-display');
+            el.textContent = `${mins}:${secs}`;
+            el.className = timeLeft <= 20 
+                ? "text-2xl font-mono font-extrabold text-rose-500 animate-pulse" 
+                : "text-2xl font-mono font-extrabold text-amber-400";
+        }
+
+        function finalizarPartidaManual() {
+            clearInterval(timerInterval);
+            finalizarYMinarBloque();
+        }
+
+        async function finalizarYMinarBloque() {
+            const res = await fetch('/api/blockchain/minar-bloque', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jugador: currentPlayer,
+                    puntuacion: score,
+                    palabras_adivinadas: solved
+                })
+            });
+
+            if (!res.ok) {
+                const err = await res.json();
+                alert(err.detail);
+                volverAlInicio();
+                return;
+            }
+
+            const bloque = await res.json();
+
+            document.getElementById('screen-game').classList.add('hidden');
+            document.getElementById('screen-summary').classList.remove('hidden');
+
+            document.getElementById('sum-id').textContent = `#${bloque.id}`;
+            document.getElementById('sum-player').textContent = bloque.jugador;
+            document.getElementById('sum-attempt').textContent = bloque.intento_num;
+            document.getElementById('sum-score').textContent = `${bloque.puntuacion} pts (${bloque.palabras_adivinadas} animales)`;
+            document.getElementById('sum-prev').textContent = bloque.prev_hash;
+            document.getElementById('sum-hash').textContent = bloque.hash_actual;
+
+            await cargarCadena();
+        }
+
+        function volverAlInicio() {
+            document.getElementById('screen-summary').classList.add('hidden');
+            document.getElementById('screen-login').classList.remove('hidden');
+            consultarJugador();
+        }
+
+        async function loadNextAnimal() {
+            document.getElementById('hint-text').classList.add('hidden');
+            document.getElementById('status-msg').textContent = '';
+
+            const response = await fetch('/api/juego/siguiente');
+            currentAnimal = await response.json();
+
+            document.getElementById('difficulty-badge').textContent = `Dificultad: ${currentAnimal.dificultad}`;
+            document.getElementById('hint-text').textContent = currentAnimal.pista;
+
+            poolLetters = currentAnimal.palabra_desordenada.split('').map((char, idx) => ({ id: idx, char, used: false }));
+            answerLetters = [];
+            renderBoard();
+        }
+
+        function renderBoard() {
+            const slotsEl = document.getElementById('answer-slots');
+            const poolEl = document.getElementById('letter-pool');
+            slotsEl.innerHTML = '';
+            poolEl.innerHTML = '';
+
+            for (let i = 0; i < currentAnimal.longitud; i++) {
+                const slot = document.createElement('button');
+                const letterObj = answerLetters[i];
+                slot.className = `w-10 h-12 md:w-11 md:h-13 rounded-xl font-bold text-lg flex items-center justify-center border-2 transition ${
+                    letterObj ? 'bg-emerald-500 text-slate-950 border-emerald-300 cursor-pointer' : 'bg-slate-950 border-slate-700'
+                }`;
+                slot.textContent = letterObj ? letterObj.char : '';
+                if (letterObj) slot.onclick = () => removeLetter(i);
+                slotsEl.appendChild(slot);
+            }
+
+            poolLetters.forEach((item) => {
+                const btn = document.createElement('button');
+                btn.className = `w-10 h-12 md:w-11 md:h-13 rounded-xl font-bold text-lg transition ${
+                    item.used ? 'bg-slate-800/40 text-slate-600 cursor-not-allowed' : 'bg-white text-slate-950 hover:bg-emerald-200 cursor-pointer'
+                }`;
+                btn.textContent = item.char;
+                btn.disabled = item.used;
+                btn.onclick = () => selectLetter(item.id);
+                poolEl.appendChild(btn);
+            });
+        }
+
+        function selectLetter(id) {
+            if (answerLetters.length >= currentAnimal.longitud) return;
+            const item = poolLetters.find(l => l.id === id);
+            if (item && !item.used) {
+                item.used = true;
+                answerLetters.push(item);
+                renderBoard();
+            }
+        }
+
+        function removeLetter(index) {
+            const removed = answerLetters.splice(index, 1)[0];
+            removed.used = false;
+            renderBoard();
+        }
+
+        function clearAnswer() {
+            answerLetters.forEach(item => item.used = false);
+            answerLetters = [];
+            renderBoard();
+        }
+
+        function toggleHint() {
+            document.getElementById('hint-text').classList.toggle('hidden');
+        }
+
+        async function checkAnswer() {
+            if (answerLetters.length !== currentAnimal.longitud) return;
+            const respuesta = answerLetters.map(l => l.char).join('');
+
+            const res = await fetch('/api/juego/validar', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ animal_id: currentAnimal.id, respuesta })
+            });
+            const data = await res.json();
+
+            if (data.correcto) {
+                const puntosGanados = currentAnimal.dificultad === 'Difícil' ? 30 : (currentAnimal.dificultad === 'Media' ? 20 : 10);
+                score += puntosGanados;
+                solved += 1;
+                document.getElementById('score').textContent = score;
+                document.getElementById('solved').textContent = solved;
+                document.getElementById('status-msg').textContent = `¡Correcto! +${puntosGanados} pts (${data.nombre_correcto})`;
+                if (typeof confetti === 'function') confetti({ particleCount: 45, spread: 60, origin: { y: 0.7 } });
+                setTimeout(loadNextAnimal, 650);
+            } else {
+                const slotsEl = document.getElementById('answer-slots');
+                slotsEl.classList.add('shake');
+                document.getElementById('status-msg').textContent = 'Incorrecto, intenta de nuevo.';
+                setTimeout(() => slotsEl.classList.remove('shake'), 350);
+            }
+        }
+
+        async function cargarCadena() {
+            await verificarEstadoBD();
+            const res = await fetch('/api/blockchain/cadena');
+            const data = await res.json();
+
+            const banner = document.getElementById('audit-banner');
+            if (data.integra) {
+                banner.className = "p-3 rounded-xl text-xs mb-4 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300";
+                banner.textContent = `Cadena íntegra (${data.total_bloques} bloques verificados). Todos los hashes SHA-256 coinciden.`;
+            } else {
+                banner.className = "p-3 rounded-xl text-xs mb-4 bg-rose-500/15 border border-rose-500/40 text-rose-300";
+                banner.innerHTML = `<strong>ALERTA DE INTEGRIDAD:</strong><br>` + data.errores.join('<br>');
+            }
+
+            const container = document.getElementById('blocks-container');
+            container.innerHTML = '';
+
+            if (data.bloques.length === 0) {
+                container.innerHTML = `<p class="text-xs text-slate-500 text-center py-6">Aún no hay bloques minados en DynamoDB.</p>`;
+                return;
+            }
+
+            data.bloques.slice().reverse().forEach(b => {
+                const card = document.createElement('div');
+                card.className = b.valido
+                    ? "bg-slate-950 border border-slate-800 rounded-2xl p-3 text-xs font-mono"
+                    : "bg-rose-950/40 border border-rose-500/50 rounded-2xl p-3 text-xs font-mono";
+
+                card.innerHTML = `
+                    <div class="flex justify-between items-center mb-1">
+                        <span class="font-bold ${b.valido ? 'text-emerald-400' : 'text-rose-400'}">Bloque #${b.id} &bull; ${b.jugador} (Intento #${b.intento_num})</span>
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold ${b.valido ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'}">
+                            ${b.valido ? 'VÁLIDO' : 'CORRUPTO'}
+                        </span>
+                    </div>
+                    <div class="text-slate-300 mb-1">Puntos: <strong>${b.puntuacion}</strong> | Animales: ${b.palabras_adivinadas} | <span class="text-slate-500">${b.timestamp}</span></div>
+                    <div class="text-[10px] text-slate-500 truncate">Prev: ${b.prev_hash}</div>
+                    <div class="text-[10px] ${b.valido ? 'text-sky-400' : 'text-rose-400'} truncate">Hash: ${b.hash_actual}</div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        async function ejecutarAtaque() {
+            const bloqueId = parseInt(document.getElementById('attack-id').value);
+            const nuevaPunt = parseInt(document.getElementById('attack-score').value);
+            if (!bloqueId || isNaN(nuevaPunt)) {
+                alert("Ingresa el ID del bloque y la nueva puntuación.");
+                return;
+            }
+
+            const res = await fetch('/api/blockchain/simular-ataque', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ bloque_id: bloqueId, nueva_puntuacion: nuevaPunt })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                alert(data.detail);
+            } else {
+                alert(data.mensaje);
+                await cargarCadena();
+            }
+        }
+
+        cargarCadena();
+    </script>
+</body>
+</html>
