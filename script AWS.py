@@ -8,7 +8,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 # Reemplaza esta URL con la de tu repositorio de GitHub que contiene el proyecto Scramble
-GITHUB_REPO_URL = "https://github.com/TU_USUARIO/TU_REPO_SCRAMBLE.git"
+GITHUB_REPO_URL = "https://github.com/josevilla7701/CS-proyecto.git"
 
 
 def generar_user_data(region_name, table_name):
