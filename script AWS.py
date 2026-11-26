@@ -7,7 +7,7 @@ import urllib.request
 import boto3
 from botocore.exceptions import ClientError
 
-# Reemplaza esta URL con la de tu repositorio de GitHub que contiene el proyecto Scramble
+
 GITHUB_REPO_URL = "https://github.com/josevilla7701/CS-proyecto.git"
 
 
